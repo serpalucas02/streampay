@@ -1,5 +1,7 @@
 # 💸 StreamPay
 
+**🌐 Language:** English · [Español](README.es.md)
+
 Real-time token payments: lock an ERC-20 amount and **stream it to someone linearly over time**. The recipient can withdraw whatever has accrued at any second, and either party can cancel and split the rest fairly. Think "salary by the second" — a money-streaming primitive like [Sablier](https://sablier.com) or [Superfluid](https://superfluid.finance).
 
 > Full-stack portfolio project: Solidity contract (Foundry) + Next.js frontend (wagmi/viem) with a live counter that ticks up second by second.
