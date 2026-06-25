@@ -369,8 +369,20 @@ export default function Home() {
                   value={recipient}
                   onChange={(e) => setRecipient(e.target.value)}
                   placeholder="Recipient address (0x…)"
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 sm:col-span-2"
                 />
+                <select
+                  defaultValue={TOKEN_SYMBOL}
+                  aria-label="Token to stream"
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                >
+                  <option value={TOKEN_SYMBOL}>{TOKEN_SYMBOL} (test token)</option>
+                  {PRODUCTION_TOKENS.map((t) => (
+                    <option key={t.symbol} value={t.symbol} disabled>
+                      {t.symbol} · mainnet only
+                    </option>
+                  ))}
+                </select>
                 <input
                   value={amount}
                   onChange={(e) => {
