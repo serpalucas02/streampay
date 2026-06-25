@@ -57,6 +57,15 @@ function fmt(wei: bigint, decimals = 4): string {
   });
 }
 
+// Parse the amount field to wei, returning null if it's empty or malformed.
+function safeParse(v: string): bigint | null {
+  try {
+    return v.trim() ? parseUnits(v, TOKEN_DECIMALS) : null;
+  } catch {
+    return null;
+  }
+}
+
 function shortAddr(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
@@ -81,6 +90,14 @@ export default function Home() {
   const [durationSecs, setDurationSecs] = useState(DURATIONS[1].secs);
 
   const wrongNetwork = isConnected && chainId !== EXPECTED_CHAIN.id;
+
+  // Form validation — all checked up front so we never send a tx that's bound to fail.
+  const parsedAmount = safeParse(amount);
+  const isSelf = !!address && isAddress(recipient) && recipient.toLowerCase() === address.toLowerCase();
+  const recipientOk = isAddress(recipient) && !isSelf;
+  const amountOk = parsedAmount !== null && parsedAmount > BigInt(0);
+  const enoughBalance = parsedAmount !== null && parsedAmount <= balance;
+  const canCreate = recipientOk && amountOk && enoughBalance;
 
   // Tick the clock once a second so the streamed amounts update live (pure client-side, no RPC).
   useEffect(() => {
@@ -198,15 +215,14 @@ export default function Home() {
   }
 
   function createStream() {
-    if (!isAddress(recipient) || !amount || Number(amount) <= 0) return;
+    if (!canCreate || parsedAmount === null) return;
     run("create", async () => {
-      const deposit = parseUnits(amount, TOKEN_DECIMALS);
       // 1) approve the contract to pull the deposit
       const approveHash = await writeContractAsync({
         address: TOKEN_ADDRESS,
         abi: tokenAbi,
         functionName: "approve",
-        args: [STREAMPAY_ADDRESS, deposit],
+        args: [STREAMPAY_ADDRESS, parsedAmount],
       });
       await publicClient!.waitForTransactionReceipt({ hash: approveHash });
       // 2) open the stream
@@ -214,7 +230,7 @@ export default function Home() {
         address: STREAMPAY_ADDRESS,
         abi: streamPayAbi,
         functionName: "createStream",
-        args: [TOKEN_ADDRESS, recipient as `0x${string}`, deposit, BigInt(durationSecs)],
+        args: [TOKEN_ADDRESS, recipient as `0x${string}`, parsedAmount, BigInt(durationSecs)],
       });
       await publicClient!.waitForTransactionReceipt({ hash: createHash });
       setRecipient("");
@@ -337,13 +353,23 @@ export default function Home() {
                 </select>
                 <button
                   onClick={createStream}
-                  disabled={busy === "create" || !isAddress(recipient) || !amount || Number(amount) <= 0}
+                  disabled={busy === "create" || !canCreate}
                   className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {busy === "create" ? "Creating…" : "Start streaming"}
                 </button>
               </div>
-              <p className="mt-2 text-xs text-slate-400">Creating a stream takes two signatures: approve, then create.</p>
+              {recipient && !isAddress(recipient) ? (
+                <p className="mt-2 text-xs text-rose-500">Enter a valid recipient address.</p>
+              ) : isSelf ? (
+                <p className="mt-2 text-xs text-rose-500">You can&apos;t stream to your own address.</p>
+              ) : amountOk && !enoughBalance ? (
+                <p className="mt-2 text-xs text-rose-500">
+                  Not enough {TOKEN_SYMBOL} — your balance is {fmt(balance)}.
+                </p>
+              ) : (
+                <p className="mt-2 text-xs text-slate-400">Creating a stream takes two signatures: approve, then create.</p>
+              )}
             </section>
 
             {loading && <p className="text-center text-slate-500">Loading your streams…</p>}
@@ -419,7 +445,8 @@ function StreamCard({
   onAction: (id: bigint) => void;
   actionLabel: "Withdraw" | "Cancel";
 }) {
-  const streamed = computeStreamed(s.deposit, s.startTime, s.stopTime, now);
+  // Active streams tick live; settled ones freeze at what the recipient actually received.
+  const streamed = s.active ? computeStreamed(s.deposit, s.startTime, s.stopTime, now) : s.withdrawn;
   const withdrawable = s.active ? streamed - s.withdrawn : BigInt(0);
   const pct = s.deposit > BigInt(0) ? Number((streamed * BigInt(10000)) / s.deposit) / 100 : 0;
   const counterpart = actionLabel === "Withdraw" ? s.sender : s.recipient;

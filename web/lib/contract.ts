@@ -1,5 +1,5 @@
 // Deployed on Ethereum Sepolia.
-export const STREAMPAY_ADDRESS = "0x110bf7728138a8d401d9b4bbff09ec956869e9f1" as const;
+export const STREAMPAY_ADDRESS = "0x6125DdC07117760c095623A95eEc3Ede17A846A8" as const;
 export const TOKEN_ADDRESS = "0x39a5042cfb5cc1af57d8648799feac555a492cb7" as const;
 
 // Block both contracts were deployed at — we scan StreamCreated events from here.

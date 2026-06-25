@@ -120,6 +120,73 @@ contract StreamPayTest is Test {
         stream.createStream(address(token), bob, DEPOSIT, DURATION);
     }
 
+    function testCreateRevertsWithInsufficientBalance() public {
+        uint256 tooMuch = 2_000_000 ether; // alice was minted only 1,000,000
+        vm.startPrank(alice);
+        token.approve(address(stream), tooMuch);
+        vm.expectRevert(); // ERC20InsufficientBalance from the token
+        stream.createStream(address(token), bob, tooMuch, DURATION);
+        vm.stopPrank();
+    }
+
+    function testCreateRecordsActualReceivedForFeeToken() public {
+        FeeToken fee = new FeeToken(1000); // 10% fee on transfer
+        fee.mint(alice, DEPOSIT);
+
+        vm.startPrank(alice);
+        fee.approve(address(stream), DEPOSIT);
+        uint256 id = stream.createStream(address(fee), bob, DEPOSIT, DURATION);
+        vm.stopPrank();
+
+        // The contract records what ACTUALLY arrived (900), not what was requested (1000).
+        assertEq(stream.getStream(id).deposit, 900 ether, "records received, not requested");
+        assertEq(fee.balanceOf(address(stream)), 900 ether, "holds exactly what it accounted");
+
+        // At the end the recipient withdraws the full recorded amount and the contract
+        // empties out completely — no shortfall that could touch another stream's funds.
+        vm.warp(block.timestamp + DURATION);
+        vm.prank(bob);
+        stream.withdraw(id);
+        assertEq(fee.balanceOf(bob), 810 ether, "got 900 minus the 10% transfer fee");
+        assertEq(fee.balanceOf(address(stream)), 0, "contract fully settled, nothing stuck or borrowed");
+    }
+
+    function testCreateRevertsIfNothingReceived() public {
+        FeeToken fee = new FeeToken(10000); // 100% fee -> contract receives nothing
+        fee.mint(alice, DEPOSIT);
+        vm.startPrank(alice);
+        fee.approve(address(stream), DEPOSIT);
+        vm.expectRevert(StreamPay.ZeroDeposit.selector);
+        stream.createStream(address(fee), bob, DEPOSIT, DURATION);
+        vm.stopPrank();
+    }
+
+    // The core safety property: one stream can never touch another's funds.
+    function testMultipleStreamsAreIsolated() public {
+        uint256 start = block.timestamp;
+        vm.startPrank(alice);
+        token.approve(address(stream), DEPOSIT + 500 ether);
+        uint256 id1 = stream.createStream(address(token), bob, DEPOSIT, DURATION); // 1000 to bob
+        uint256 id2 = stream.createStream(address(token), carol, 500 ether, DURATION); // 500 to carol
+        vm.stopPrank();
+        assertEq(token.balanceOf(address(stream)), DEPOSIT + 500 ether);
+
+        vm.warp(start + 500); // halfway
+        vm.prank(bob);
+        stream.withdraw(id1);
+        assertEq(token.balanceOf(bob), 500 ether);
+        assertEq(stream.withdrawableAmount(id2), 250 ether, "carol's stream is untouched by bob's withdraw");
+
+        vm.prank(alice);
+        stream.cancel(id1); // refunds alice the unstreamed 500
+
+        vm.warp(start + DURATION); // carol's stream reaches the end
+        vm.prank(carol);
+        stream.withdraw(id2);
+        assertEq(token.balanceOf(carol), 500 ether, "carol still gets her full deposit");
+        assertEq(token.balanceOf(address(stream)), 0, "everything settled, no funds stuck or borrowed");
+    }
+
     // --- accrual (streamedAmount / withdrawableAmount) ---
 
     function testStreamedAmountProgression() public {
@@ -230,6 +297,8 @@ contract StreamPayTest is Test {
         assertEq(token.balanceOf(alice), aliceBefore + 600 ether, "sender gets the rest back");
         assertEq(token.balanceOf(address(stream)), 0, "contract emptied");
         assertFalse(stream.getStream(id).active);
+        assertEq(stream.getStream(id).withdrawn, 400 ether, "withdrawn reflects what the recipient actually received");
+        assertEq(stream.streamedAmount(id), 400 ether, "streamedAmount freezes at the settled total, not time-based");
     }
 
     function testCancelByRecipientWorks() public {
@@ -379,5 +448,28 @@ contract ReentrantToken is ERC20 {
             _armed = false; // one shot
             _target.withdraw(_attackId); // should revert via ReentrancyGuard
         }
+    }
+}
+
+/// @dev ERC-20 that charges a fee on every transfer, to test fee-on-transfer accounting.
+contract FeeToken is ERC20 {
+    uint256 private immutable _feeBps;
+
+    constructor(uint256 feeBps_) ERC20("Fee", "FEE") {
+        _feeBps = feeBps_;
+    }
+
+    function mint(address to_, uint256 amount_) external {
+        _mint(to_, amount_);
+    }
+
+    function _update(address from_, address to_, uint256 value_) internal override {
+        if (from_ == address(0) || to_ == address(0)) {
+            super._update(from_, to_, value_); // no fee on mint / burn
+            return;
+        }
+        uint256 fee = (value_ * _feeBps) / 10000;
+        super._update(from_, to_, value_ - fee);
+        super._update(from_, address(0xdEaD), fee);
     }
 }

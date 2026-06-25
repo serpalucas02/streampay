@@ -64,21 +64,34 @@ contract StreamPay is ReentrancyGuard {
 
     /**
      * @notice Open a stream that pays `recipient_` `deposit_` tokens linearly over `duration_` seconds.
-     * @dev Pulls `deposit_` from the caller, who must approve this contract first.
+     * @dev Pulls `deposit_` from the caller (who must approve first) and records the
+     *      amount actually received, so fee-on-transfer tokens can't make the contract
+     *      over-account (which would let one stream draw on another's funds). Rebasing
+     *      tokens whose balance changes after the deposit are not supported.
      * @param token_ ERC-20 to stream.
      * @param recipient_ Address that will receive the stream.
-     * @param deposit_ Total amount to lock and stream (must be > 0).
+     * @param deposit_ Amount to pull from the caller (must be > 0; the recorded deposit
+     *        is the amount actually received).
      * @param duration_ Stream length in seconds (must be > 0).
      * @return streamId The id of the new stream.
      */
     function createStream(address token_, address recipient_, uint256 deposit_, uint64 duration_)
         external
+        nonReentrant
         returns (uint256 streamId)
     {
         if (token_ == address(0) || recipient_ == address(0)) revert ZeroAddress();
         if (recipient_ == msg.sender) revert CannotStreamToSelf();
         if (deposit_ == 0) revert ZeroDeposit();
         if (duration_ == 0) revert ZeroDuration();
+
+        // Pull first and measure what really arrived. nonReentrant keeps the
+        // balance reading honest even if the token has transfer hooks.
+        IERC20 token = IERC20(token_);
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(msg.sender, address(this), deposit_);
+        uint256 received = token.balanceOf(address(this)) - balanceBefore;
+        if (received == 0) revert ZeroDeposit();
 
         uint64 start = uint64(block.timestamp);
         uint64 stop = start + duration_;
@@ -88,16 +101,14 @@ contract StreamPay is ReentrancyGuard {
             sender: msg.sender,
             recipient: recipient_,
             token: token_,
-            deposit: deposit_,
+            deposit: received,
             withdrawn: 0,
             startTime: start,
             stopTime: stop,
             active: true
         });
 
-        emit StreamCreated(streamId, msg.sender, recipient_, token_, deposit_, start, stop);
-
-        IERC20(token_).safeTransferFrom(msg.sender, address(this), deposit_);
+        emit StreamCreated(streamId, msg.sender, recipient_, token_, received, start, stop);
     }
 
     /**
@@ -137,9 +148,10 @@ contract StreamPay is ReentrancyGuard {
         uint256 recipientPayout = streamed - s.withdrawn; // accrued but not yet withdrawn
         uint256 senderRefund = s.deposit - streamed; // not yet streamed
 
-        // Settle before moving any funds.
+        // Settle before moving any funds. `withdrawn` becomes the recipient's lifetime
+        // receipts; `active = false` is what actually blocks any further action.
         s.active = false;
-        s.withdrawn = s.deposit;
+        s.withdrawn = streamed;
 
         address token = s.token;
         address recipient = s.recipient;
@@ -152,10 +164,11 @@ contract StreamPay is ReentrancyGuard {
     }
 
     /// @notice Total tokens that have accrued to the recipient so far (withdrawn or not).
+    /// @dev Once a stream is settled, `withdrawn` is the final total — don't keep accruing by time.
     function streamedAmount(uint256 streamId_) public view returns (uint256) {
         Stream memory s = _streams[streamId_];
         if (s.sender == address(0)) revert StreamNotFound();
-        return _streamedAmount(s);
+        return s.active ? _streamedAmount(s) : s.withdrawn;
     }
 
     /// @notice Tokens the recipient can withdraw right now (accrued minus already withdrawn).

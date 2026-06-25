@@ -9,7 +9,7 @@ Real-time token payments: lock an ERC-20 amount and **stream it to someone linea
 ## Live demo
 
 - 🌐 **App:** _(deploy `web/` to Vercel — see below)_
-- 📜 **StreamPay (verified):** [`0x110b…e9f1`](https://sepolia.etherscan.io/address/0x110bf7728138a8d401d9b4bbff09ec956869e9f1#code)
+- 📜 **StreamPay (verified):** [`0x6125…46A8`](https://sepolia.etherscan.io/address/0x6125ddc07117760c095623a95eec3ede17a846a8#code)
 - 🪙 **Test token sUSD (verified):** [`0x39A5…2cB7`](https://sepolia.etherscan.io/address/0x39a5042cfb5cc1af57d8648799feac555a492cb7#code)
 
 On **Ethereum Sepolia**. The app has a built-in faucet — connect, grab test `sUSD`, then stream it to any address.
@@ -77,6 +77,11 @@ The frontend holds no state of its own: it writes to the contract, waits, and re
 - **Access control** — only the recipient withdraws; only the sender or recipient can cancel.
 - Custom errors + input validation (zero address, zero deposit/duration, no self-stream).
 - A test (`testReentrancyGuardBlocksMaliciousToken`) deploys a malicious ERC-20 that tries to **reenter `withdraw`** on its transfer hook and asserts the guard blocks it.
+- A test (`testMultipleStreamsAreIsolated`) proves one stream can never draw on another's funds.
+
+**Reviewed adversarially** (reentrancy, fund conservation, access control, integer/precision, fee-on-transfer, edge cases): no critical/high/medium issues found. The conservation invariant `recipientPayout + senderRefund == deposit − withdrawn` holds exactly, and deposits record the amount **actually received** so a fee-on-transfer token can't make one stream over-account against another's funds.
+
+**Known limitations (v1, by design):** assumes non-rebasing tokens; with a fee-on-transfer token the recipient still pays the token's fee on the *outbound* withdrawal. A blacklisting token that freezes the recipient can block `cancel` (both sides settle in one tx) — a v2 would split settlement into independent pull claims.
 
 ---
 
