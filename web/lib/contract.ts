@@ -1,5 +1,5 @@
 // Deployed on Ethereum Sepolia.
-export const STREAMPAY_ADDRESS = "0x6125DdC07117760c095623A95eEc3Ede17A846A8" as const;
+export const STREAMPAY_ADDRESS = "0xF8b6d10abc4155a510CAB90932f0902c4C4c8c4b" as const;
 export const TOKEN_ADDRESS = "0x39a5042cfb5cc1af57d8648799feac555a492cb7" as const;
 
 // Block both contracts were deployed at — we scan StreamCreated events from here.
@@ -34,6 +34,23 @@ export const streamPayAbi = [
     stateMutability: "nonpayable",
     inputs: [{ name: "streamId_", type: "uint256" }],
     outputs: [],
+  },
+  {
+    type: "function",
+    name: "claim",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "token_", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "claimable",
+    stateMutability: "view",
+    inputs: [
+      { name: "account_", type: "address" },
+      { name: "token_", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
   },
   {
     type: "function",

@@ -29,6 +29,7 @@ contract StreamPay is ReentrancyGuard {
     error NotStreamRecipient();
     error NotStreamParty();
     error NothingToWithdraw();
+    error NothingToClaim();
 
     struct Stream {
         address sender; // who funds the stream
@@ -43,6 +44,8 @@ contract StreamPay is ReentrancyGuard {
 
     uint256 private _nextStreamId = 1;
     mapping(uint256 streamId => Stream) private _streams;
+    // Funds owed to an account per token (credited on cancel, pulled via claim()).
+    mapping(address account => mapping(address token => uint256)) private _claimable;
 
     event StreamCreated(
         uint256 indexed streamId,
@@ -61,6 +64,7 @@ contract StreamPay is ReentrancyGuard {
         uint256 senderRefund,
         uint256 recipientPayout
     );
+    event Claimed(address indexed account, address indexed token, uint256 amount);
 
     /**
      * @notice Open a stream that pays `recipient_` `deposit_` tokens linearly over `duration_` seconds.
@@ -135,10 +139,13 @@ contract StreamPay is ReentrancyGuard {
 
     /**
      * @notice Cancel a stream: the recipient keeps what has accrued, the sender gets the rest back.
-     * @dev Either the sender or the recipient can cancel. Settles and pays both sides in one call.
+     * @dev Either the sender or the recipient can cancel. Settlement *credits* each party's
+     *      claimable balance instead of transferring here, so a token that reverts for one side
+     *      (e.g. a blacklist) can never block the other. cancel makes no external calls; both
+     *      sides pull independently via claim().
      * @param streamId_ The stream to cancel.
      */
-    function cancel(uint256 streamId_) external nonReentrant {
+    function cancel(uint256 streamId_) external {
         Stream storage s = _streams[streamId_];
         if (s.sender == address(0)) revert StreamNotFound();
         if (!s.active) revert StreamNotActive();
@@ -148,19 +155,34 @@ contract StreamPay is ReentrancyGuard {
         uint256 recipientPayout = streamed - s.withdrawn; // accrued but not yet withdrawn
         uint256 senderRefund = s.deposit - streamed; // not yet streamed
 
-        // Settle before moving any funds. `withdrawn` becomes the recipient's lifetime
-        // receipts; `active = false` is what actually blocks any further action.
+        // `withdrawn` becomes the recipient's lifetime receipts; `active = false` blocks any
+        // further action on this stream.
         s.active = false;
         s.withdrawn = streamed;
 
-        address token = s.token;
-        address recipient = s.recipient;
-        address sender = s.sender;
+        if (recipientPayout > 0) _claimable[s.recipient][s.token] += recipientPayout;
+        if (senderRefund > 0) _claimable[s.sender][s.token] += senderRefund;
 
-        emit StreamCancelled(streamId_, sender, recipient, senderRefund, recipientPayout);
+        emit StreamCancelled(streamId_, s.sender, s.recipient, senderRefund, recipientPayout);
+    }
 
-        if (recipientPayout > 0) IERC20(token).safeTransfer(recipient, recipientPayout);
-        if (senderRefund > 0) IERC20(token).safeTransfer(sender, senderRefund);
+    /**
+     * @notice Pull everything credited to you for a token (e.g. your side of a cancelled stream).
+     * @dev Pull pattern with CEI + ReentrancyGuard, so each party claims independently.
+     * @param token_ The token to claim.
+     * @return amount The amount transferred to the caller.
+     */
+    function claim(address token_) external nonReentrant returns (uint256 amount) {
+        amount = _claimable[msg.sender][token_];
+        if (amount == 0) revert NothingToClaim();
+        _claimable[msg.sender][token_] = 0;
+        emit Claimed(msg.sender, token_, amount);
+        IERC20(token_).safeTransfer(msg.sender, amount);
+    }
+
+    /// @notice Amount credited to `account_` for `token_`, withdrawable via claim().
+    function claimable(address account_, address token_) external view returns (uint256) {
+        return _claimable[account_][token_];
     }
 
     /// @notice Total tokens that have accrued to the recipient so far (withdrawn or not).

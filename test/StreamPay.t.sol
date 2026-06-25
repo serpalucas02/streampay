@@ -28,6 +28,7 @@ contract StreamPayTest is Test {
         uint64 stopTime
     );
     event Withdrawn(uint256 indexed streamId, address indexed recipient, uint256 amount);
+    event Claimed(address indexed account, address indexed token, uint256 amount);
     event StreamCancelled(
         uint256 indexed streamId,
         address indexed sender,
@@ -163,27 +164,30 @@ contract StreamPayTest is Test {
 
     // The core safety property: one stream can never touch another's funds.
     function testMultipleStreamsAreIsolated() public {
-        uint256 start = block.timestamp;
         vm.startPrank(alice);
         token.approve(address(stream), DEPOSIT + 500 ether);
         uint256 id1 = stream.createStream(address(token), bob, DEPOSIT, DURATION); // 1000 to bob
         uint256 id2 = stream.createStream(address(token), carol, 500 ether, DURATION); // 500 to carol
         vm.stopPrank();
+        uint64 startT = stream.getStream(id1).startTime; // stable across vm.warp
         assertEq(token.balanceOf(address(stream)), DEPOSIT + 500 ether);
 
-        vm.warp(start + 500); // halfway
+        vm.warp(startT + 500); // halfway
         vm.prank(bob);
         stream.withdraw(id1);
         assertEq(token.balanceOf(bob), 500 ether);
         assertEq(stream.withdrawableAmount(id2), 250 ether, "carol's stream is untouched by bob's withdraw");
 
         vm.prank(alice);
-        stream.cancel(id1); // refunds alice the unstreamed 500
+        stream.cancel(id1); // credits alice the unstreamed 500
 
-        vm.warp(start + DURATION); // carol's stream reaches the end
+        vm.warp(startT + DURATION); // carol's stream reaches the end
         vm.prank(carol);
         stream.withdraw(id2);
         assertEq(token.balanceOf(carol), 500 ether, "carol still gets her full deposit");
+
+        vm.prank(alice);
+        stream.claim(address(token)); // alice pulls her refund
         assertEq(token.balanceOf(address(stream)), 0, "everything settled, no funds stuck or borrowed");
     }
 
@@ -289,16 +293,25 @@ contract StreamPayTest is Test {
         uint256 id = _create();
         vm.warp(block.timestamp + 400);
 
-        uint256 aliceBefore = token.balanceOf(alice);
         vm.prank(alice);
         stream.cancel(id);
 
-        assertEq(token.balanceOf(bob), 400 ether, "recipient keeps the accrued part");
-        assertEq(token.balanceOf(alice), aliceBefore + 600 ether, "sender gets the rest back");
-        assertEq(token.balanceOf(address(stream)), 0, "contract emptied");
+        // cancel credits both sides (no transfers); funds stay put until each party claims.
+        assertEq(stream.claimable(bob, address(token)), 400 ether, "recipient credited the accrued part");
+        assertEq(stream.claimable(alice, address(token)), 600 ether, "sender credited the remainder");
+        assertEq(token.balanceOf(address(stream)), DEPOSIT, "nothing moved yet");
         assertFalse(stream.getStream(id).active);
-        assertEq(stream.getStream(id).withdrawn, 400 ether, "withdrawn reflects what the recipient actually received");
-        assertEq(stream.streamedAmount(id), 400 ether, "streamedAmount freezes at the settled total, not time-based");
+        assertEq(stream.getStream(id).withdrawn, 400 ether, "withdrawn = recipient's lifetime receipts");
+        assertEq(stream.streamedAmount(id), 400 ether, "streamedAmount frozen at the settled total");
+
+        uint256 aliceBefore = token.balanceOf(alice);
+        vm.prank(bob);
+        stream.claim(address(token));
+        vm.prank(alice);
+        stream.claim(address(token));
+        assertEq(token.balanceOf(bob), 400 ether, "recipient pulled the accrued part");
+        assertEq(token.balanceOf(alice), aliceBefore + 600 ether, "sender pulled the remainder");
+        assertEq(token.balanceOf(address(stream)), 0, "contract emptied once both claimed");
     }
 
     function testCancelByRecipientWorks() public {
@@ -306,7 +319,19 @@ contract StreamPayTest is Test {
         vm.warp(block.timestamp + 400);
         vm.prank(bob);
         stream.cancel(id);
+        assertEq(stream.claimable(bob, address(token)), 400 ether);
+
+        vm.prank(bob);
+        stream.claim(address(token));
         assertEq(token.balanceOf(bob), 400 ether);
+    }
+
+    function testCancelAtStartCreditsFullRefund() public {
+        uint256 id = _create(); // no time elapsed
+        vm.prank(alice);
+        stream.cancel(id);
+        assertEq(stream.claimable(alice, address(token)), DEPOSIT, "full refund credited to sender");
+        assertEq(stream.claimable(bob, address(token)), 0, "recipient credited nothing");
     }
 
     function testCancelEmits() public {
@@ -320,18 +345,26 @@ contract StreamPayTest is Test {
 
     function testCancelAfterPartialWithdraw() public {
         uint256 id = _create();
+        uint64 startT = stream.getStream(id).startTime; // stored value is stable across vm.warp
 
-        vm.warp(block.timestamp + 300);
+        vm.warp(startT + 300);
         vm.prank(bob);
-        stream.withdraw(id); // bob pulls 300
+        stream.withdraw(id); // bob pulls 300 directly (active stream)
+        assertEq(token.balanceOf(bob), 300 ether);
 
-        vm.warp(block.timestamp + 200); // now 500 streamed total
-        uint256 aliceBefore = token.balanceOf(alice);
+        vm.warp(startT + 500); // 500 streamed total
         vm.prank(alice);
         stream.cancel(id);
+        assertEq(stream.claimable(bob, address(token)), 200 ether, "remaining accrued credited");
+        assertEq(stream.claimable(alice, address(token)), 500 ether, "unstreamed credited to sender");
 
-        assertEq(token.balanceOf(bob), 500 ether, "300 withdrawn + 200 settled on cancel");
-        assertEq(token.balanceOf(alice), aliceBefore + 500 ether, "sender refunded the unstreamed 500");
+        uint256 aliceBefore = token.balanceOf(alice);
+        vm.prank(bob);
+        stream.claim(address(token));
+        vm.prank(alice);
+        stream.claim(address(token));
+        assertEq(token.balanceOf(bob), 500 ether, "300 withdrawn + 200 claimed");
+        assertEq(token.balanceOf(alice), aliceBefore + 500 ether);
         assertEq(token.balanceOf(address(stream)), 0);
     }
 
@@ -339,12 +372,11 @@ contract StreamPayTest is Test {
         uint256 id = _create();
         vm.warp(block.timestamp + DURATION + 100);
 
-        uint256 aliceBefore = token.balanceOf(alice);
         vm.prank(alice);
         stream.cancel(id);
 
-        assertEq(token.balanceOf(bob), DEPOSIT, "recipient gets everything");
-        assertEq(token.balanceOf(alice), aliceBefore, "sender gets nothing back");
+        assertEq(stream.claimable(bob, address(token)), DEPOSIT, "recipient credited everything");
+        assertEq(stream.claimable(alice, address(token)), 0, "sender credited nothing");
     }
 
     function testCancelRevertsForThirdParty() public {
@@ -376,6 +408,63 @@ contract StreamPayTest is Test {
         vm.prank(alice);
         stream.cancel(id);
         assertEq(stream.withdrawableAmount(id), 0);
+    }
+
+    // --- claim (pull settlement) ---
+
+    function testClaimRevertsWhenNothingToClaim() public {
+        vm.prank(bob);
+        vm.expectRevert(StreamPay.NothingToClaim.selector);
+        stream.claim(address(token));
+    }
+
+    function testClaimPaysAndZeroesOut() public {
+        uint256 id = _create();
+        vm.warp(block.timestamp + 400);
+        vm.prank(alice);
+        stream.cancel(id);
+
+        vm.expectEmit(true, true, false, true, address(stream));
+        emit Claimed(bob, address(token), 400 ether);
+        vm.prank(bob);
+        stream.claim(address(token));
+
+        assertEq(token.balanceOf(bob), 400 ether);
+        assertEq(stream.claimable(bob, address(token)), 0, "claim zeroes the balance");
+
+        // claiming again has nothing left
+        vm.prank(bob);
+        vm.expectRevert(StreamPay.NothingToClaim.selector);
+        stream.claim(address(token));
+    }
+
+    /// @dev The whole point of pull settlement: a blacklisted recipient can't trap the cancel
+    ///      or the sender's refund.
+    function testCancelAndRefundUnblockedByBlacklistedRecipient() public {
+        BlacklistToken bl = new BlacklistToken();
+        bl.mint(alice, DEPOSIT);
+        bl.setBlocked(bob, true); // bob can't receive this token
+
+        vm.startPrank(alice);
+        bl.approve(address(stream), DEPOSIT);
+        uint256 id = stream.createStream(address(bl), bob, DEPOSIT, DURATION);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 400);
+
+        // cancel must succeed even though the recipient is blacklisted (it makes no transfers)
+        vm.prank(alice);
+        stream.cancel(id);
+
+        // the sender pulls their refund — not blocked by the blacklisted recipient
+        vm.prank(alice);
+        stream.claim(address(bl));
+        assertEq(bl.balanceOf(alice), 600 ether, "sender recovered the unstreamed funds");
+
+        // only the blacklisted recipient's own claim fails, affecting nobody else
+        vm.prank(bob);
+        vm.expectRevert();
+        stream.claim(address(bl));
     }
 
     // --- getStream ---
@@ -471,5 +560,26 @@ contract FeeToken is ERC20 {
         uint256 fee = (value_ * _feeBps) / 10000;
         super._update(from_, to_, value_ - fee);
         super._update(from_, address(0xdEaD), fee);
+    }
+}
+
+/// @dev ERC-20 that blocks transfers to/from blacklisted addresses (USDC-style), to test that
+///      pull settlement keeps one party's freeze from trapping the other.
+contract BlacklistToken is ERC20 {
+    mapping(address => bool) public blocked;
+
+    constructor() ERC20("Blacklist", "BLK") {}
+
+    function mint(address to_, uint256 amount_) external {
+        _mint(to_, amount_);
+    }
+
+    function setBlocked(address account_, bool value_) external {
+        blocked[account_] = value_;
+    }
+
+    function _update(address from_, address to_, uint256 value_) internal override {
+        require(!blocked[from_] && !blocked[to_], "blacklisted");
+        super._update(from_, to_, value_);
     }
 }

@@ -80,6 +80,7 @@ export default function Home() {
 
   const [streams, setStreams] = useState<StreamRow[]>([]);
   const [balance, setBalance] = useState<bigint>(BigInt(0));
+  const [claimableBal, setClaimableBal] = useState<bigint>(BigInt(0));
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null); // a label for whatever action is running
   const [now, setNow] = useState(0); // current time in seconds, drives the live counters
@@ -110,6 +111,7 @@ export default function Home() {
     if (!publicClient || !address) {
       setStreams([]);
       setBalance(BigInt(0));
+      setClaimableBal(BigInt(0));
       return;
     }
     setLoading(true);
@@ -120,6 +122,14 @@ export default function Home() {
           abi: tokenAbi,
           functionName: "balanceOf",
           args: [address],
+        })) as bigint,
+      );
+      setClaimableBal(
+        (await publicClient.readContract({
+          address: STREAMPAY_ADDRESS,
+          abi: streamPayAbi,
+          functionName: "claimable",
+          args: [address, TOKEN_ADDRESS],
         })) as bigint,
       );
 
@@ -262,6 +272,18 @@ export default function Home() {
     });
   }
 
+  function claim() {
+    run("claim", async () => {
+      const hash = await writeContractAsync({
+        address: STREAMPAY_ADDRESS,
+        abi: streamPayAbi,
+        functionName: "claim",
+        args: [TOKEN_ADDRESS],
+      });
+      await publicClient!.waitForTransactionReceipt({ hash });
+    });
+  }
+
   const incoming = streams.filter((s) => s.role === "in");
   const outgoing = streams.filter((s) => s.role === "out");
 
@@ -310,6 +332,21 @@ export default function Home() {
 
         {isConnected && !wrongNetwork && (
           <div className="space-y-8">
+            {claimableBal > BigInt(0) && (
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <span className="text-sm text-emerald-900">
+                  You have <strong>{fmt(claimableBal)} {TOKEN_SYMBOL}</strong> ready to claim (from cancelled streams).
+                </span>
+                <button
+                  onClick={claim}
+                  disabled={busy === "claim"}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {busy === "claim" ? "Claiming…" : "Claim"}
+                </button>
+              </div>
+            )}
+
             {/* faucet + create form */}
             <section className="rounded-2xl bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
@@ -335,7 +372,10 @@ export default function Home() {
                 />
                 <input
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "" || /^\d*\.?\d*$/.test(v)) setAmount(v); // digits + one optional dot only
+                  }}
                   placeholder={`Amount (${TOKEN_SYMBOL})`}
                   inputMode="decimal"
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"

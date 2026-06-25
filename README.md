@@ -9,7 +9,7 @@ Real-time token payments: lock an ERC-20 amount and **stream it to someone linea
 ## Live demo
 
 - 🌐 **App:** _(deploy `web/` to Vercel — see below)_
-- 📜 **StreamPay (verified):** [`0x6125…46A8`](https://sepolia.etherscan.io/address/0x6125ddc07117760c095623a95eec3ede17a846a8#code)
+- 📜 **StreamPay (verified):** [`0xF8b6…8c4b`](https://sepolia.etherscan.io/address/0xf8b6d10abc4155a510cab90932f0902c4c4c8c4b#code)
 - 🪙 **Test token sUSD (verified):** [`0x39A5…2cB7`](https://sepolia.etherscan.io/address/0x39a5042cfb5cc1af57d8648799feac555a492cb7#code)
 
 On **Ethereum Sepolia**. The app has a built-in faucet — connect, grab test `sUSD`, then stream it to any address.
@@ -35,7 +35,8 @@ streamed = deposit * elapsed / duration   (0 before start, full deposit at/after
 ```solidity
 function createStream(token, recipient, deposit, duration); // lock funds, open the stream
 function withdraw(streamId);                                 // recipient pulls accrued (pull pattern)
-function cancel(streamId);                                   // settle: recipient keeps accrued, sender refunded
+function cancel(streamId);                                   // settle: credit each party's claimable balance
+function claim(token);                                       // pull your settled balance after a cancel
 ```
 
 ---
@@ -78,10 +79,11 @@ The frontend holds no state of its own: it writes to the contract, waits, and re
 - Custom errors + input validation (zero address, zero deposit/duration, no self-stream).
 - A test (`testReentrancyGuardBlocksMaliciousToken`) deploys a malicious ERC-20 that tries to **reenter `withdraw`** on its transfer hook and asserts the guard blocks it.
 - A test (`testMultipleStreamsAreIsolated`) proves one stream can never draw on another's funds.
+- **Pull settlement:** `cancel` credits each party's claimable balance and makes **no external calls**, so a token that reverts for one side (e.g. a blacklist freezing the recipient) can never trap the cancel or the other party's funds. Each side pulls independently via `claim()`. Proven by `testCancelAndRefundUnblockedByBlacklistedRecipient`.
 
-**Reviewed adversarially** (reentrancy, fund conservation, access control, integer/precision, fee-on-transfer, edge cases): no critical/high/medium issues found. The conservation invariant `recipientPayout + senderRefund == deposit − withdrawn` holds exactly, and deposits record the amount **actually received** so a fee-on-transfer token can't make one stream over-account against another's funds.
+**Reviewed adversarially** (reentrancy, fund conservation, access control, integer/precision, fee-on-transfer, blacklisting/DoS, edge cases): no critical/high/medium issues. Conservation holds exactly (`recipientPayout + senderRefund == deposit − withdrawn`), and deposits record the amount **actually received** so a fee-on-transfer token can't make one stream over-account against another.
 
-**Known limitations (v1, by design):** assumes non-rebasing tokens; with a fee-on-transfer token the recipient still pays the token's fee on the *outbound* withdrawal. A blacklisting token that freezes the recipient can block `cancel` (both sides settle in one tx) — a v2 would split settlement into independent pull claims.
+**Known limitations (by design):** assumes non-rebasing tokens; with a fee-on-transfer token the recipient still pays the token's own fee on the *outbound* withdrawal (the protocol stays solvent — only that recipient is affected).
 
 ---
 
@@ -126,9 +128,10 @@ Happy paths, every revert, time-based accrual, a fuzz test on the accrual invari
 
 | Operation | Gas |
 |-----------|-----|
-| `createStream` | ~177,000 |
+| `createStream` | ~185,000 |
 | `withdraw` | ~90,000 |
-| `cancel` | ~82,000 |
+| `cancel` | ~80,000 |
+| `claim` | ~45,000 |
 | accrual views | 0 — read off-chain |
 
 ---
