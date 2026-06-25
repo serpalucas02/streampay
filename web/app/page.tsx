@@ -20,6 +20,7 @@ import {
   streamPayAbi,
   tokenAbi,
 } from "@/lib/contract";
+import { PRODUCTION_TOKENS } from "@/lib/tokens";
 
 const EXPECTED_CHAIN = sepolia;
 
@@ -410,6 +411,11 @@ export default function Home() {
               ) : (
                 <p className="mt-2 text-xs text-slate-400">Creating a stream takes two signatures: approve, then create.</p>
               )}
+              <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-400">
+                Demo token: <strong>{TOKEN_SYMBOL}</strong> — a mintable test token, since real stablecoins aren&apos;t
+                available on a testnet. The contract is token-agnostic: in production the same deployment works with any
+                ERC-20 ({PRODUCTION_TOKENS.map((t) => t.symbol).join(", ")}, …).
+              </p>
             </section>
 
             {loading && <p className="text-center text-slate-500">Loading your streams…</p>}

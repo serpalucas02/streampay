@@ -66,7 +66,7 @@ The frontend holds no state of its own: it writes to the contract, waits, and re
 
 **Find streams via events, not on-chain enumeration.** Listing a user's streams is a UI concern, so the contract emits `StreamCreated` (indexed by sender and recipient) and the frontend reads it off-chain via RPC — far cheaper than maintaining on-chain arrays for every account.
 
-**Token-agnostic.** Streams carry their own token address, so one deployment works for any ERC-20.
+**Token-agnostic.** Streams carry their own token address, so one deployment works for any ERC-20 (many at once). The Sepolia demo uses a single mintable test token (`sUSD`) so anyone can try it for free; a production deployment wires a **network-aware token list** (see `web/lib/tokens.ts`) to a selector — USDC, USDT, DAI, etc. The contract already handles their quirks: `SafeERC20` for USDT's non-standard return, pull settlement for USDC's blacklist, and fee-on-transfer accounting. Mind the decimals (USDC/USDT use 6, DAI 18).
 
 ---
 
