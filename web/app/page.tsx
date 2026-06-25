@@ -102,7 +102,9 @@ export default function Home() {
   const canCreate = recipientOk && amountOk && enoughBalance;
 
   // Tick the clock once a second so the streamed amounts update live (pure client-side, no RPC).
+  // The wall clock is an external system; syncing the first tick on mount is intentional.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setNow(Math.floor(Date.now() / 1000));
     const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(t);
@@ -194,7 +196,9 @@ export default function Home() {
     }
   }, [publicClient, address]);
 
+  // Load on-chain data on connect / account / network change.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
   }, [refresh]);
 
