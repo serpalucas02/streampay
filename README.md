@@ -8,7 +8,7 @@ Real-time token payments: lock an ERC-20 amount and **stream it to someone linea
 
 ## Live demo
 
-- 🌐 **App:** _(deploy `web/` to Vercel — see below)_
+- 🌐 **App:** https://streampay-phi.vercel.app
 - 📜 **StreamPay (verified):** [`0xF8b6…8c4b`](https://sepolia.etherscan.io/address/0xf8b6d10abc4155a510cab90932f0902c4c4c8c4b#code)
 - 🪙 **Test token sUSD (verified):** [`0x39A5…2cB7`](https://sepolia.etherscan.io/address/0x39a5042cfb5cc1af57d8648799feac555a492cb7#code)
 
@@ -107,10 +107,6 @@ cp .env.example .env   # fill DEPLOYER_PRIVATE_KEY (+ ETHERSCAN_API_KEY to verif
 source .env
 forge script script/Deploy.s.sol --rpc-url sepolia --private-key $DEPLOYER_PRIVATE_KEY --broadcast --verify
 ```
-
-### Frontend on Vercel
-
-Import the repo, set **Root Directory = `web`**, deploy. No env vars needed.
 
 ---
 
