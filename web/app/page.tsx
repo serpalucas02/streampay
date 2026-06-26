@@ -83,6 +83,7 @@ export default function Home() {
   const [balance, setBalance] = useState<bigint>(BigInt(0));
   const [claimableBal, setClaimableBal] = useState<bigint>(BigInt(0));
   const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null); // a label for whatever action is running
   const [now, setNow] = useState(0); // current time in seconds, drives the live counters
 
@@ -118,81 +119,91 @@ export default function Home() {
       return;
     }
     setLoading(true);
-    try {
-      setBalance(
-        (await publicClient.readContract({
+    setFailed(false);
+    // Retry with backoff so a cold/flaky RPC doesn't render an empty dashboard on first load.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const bal = (await publicClient.readContract({
           address: TOKEN_ADDRESS,
           abi: tokenAbi,
           functionName: "balanceOf",
           args: [address],
-        })) as bigint,
-      );
-      setClaimableBal(
-        (await publicClient.readContract({
+        })) as bigint;
+        const claim = (await publicClient.readContract({
           address: STREAMPAY_ADDRESS,
           abi: streamPayAbi,
           functionName: "claimable",
           args: [address, TOKEN_ADDRESS],
-        })) as bigint,
-      );
+        })) as bigint;
 
-      // Streams are found off-chain via the StreamCreated event (cheaper than on-chain enumeration).
-      const [incoming, outgoing] = await Promise.all([
-        publicClient.getContractEvents({
-          address: STREAMPAY_ADDRESS,
-          abi: streamPayAbi,
-          eventName: "StreamCreated",
-          args: { recipient: address },
-          fromBlock: START_BLOCK,
-          toBlock: "latest",
-        }),
-        publicClient.getContractEvents({
-          address: STREAMPAY_ADDRESS,
-          abi: streamPayAbi,
-          eventName: "StreamCreated",
-          args: { sender: address },
-          fromBlock: START_BLOCK,
-          toBlock: "latest",
-        }),
-      ]);
+        // Streams are found off-chain via the StreamCreated event (cheaper than on-chain enumeration).
+        const [incoming, outgoing] = await Promise.all([
+          publicClient.getContractEvents({
+            address: STREAMPAY_ADDRESS,
+            abi: streamPayAbi,
+            eventName: "StreamCreated",
+            args: { recipient: address },
+            fromBlock: START_BLOCK,
+            toBlock: "latest",
+          }),
+          publicClient.getContractEvents({
+            address: STREAMPAY_ADDRESS,
+            abi: streamPayAbi,
+            eventName: "StreamCreated",
+            args: { sender: address },
+            fromBlock: START_BLOCK,
+            toBlock: "latest",
+          }),
+        ]);
 
-      const roles = new Map<string, "in" | "out">();
-      for (const l of incoming) roles.set((l.args.streamId as bigint).toString(), "in");
-      for (const l of outgoing) roles.set((l.args.streamId as bigint).toString(), "out");
+        const roles = new Map<string, "in" | "out">();
+        for (const l of incoming) roles.set((l.args.streamId as bigint).toString(), "in");
+        for (const l of outgoing) roles.set((l.args.streamId as bigint).toString(), "out");
 
-      const rows: StreamRow[] = [];
-      for (const [idStr, role] of roles) {
-        const id = BigInt(idStr);
-        const s = (await publicClient.readContract({
-          address: STREAMPAY_ADDRESS,
-          abi: streamPayAbi,
-          functionName: "getStream",
-          args: [id],
-        })) as {
-          sender: string;
-          recipient: string;
-          deposit: bigint;
-          withdrawn: bigint;
-          startTime: bigint;
-          stopTime: bigint;
-          active: boolean;
-        };
-        rows.push({
-          id,
-          sender: s.sender,
-          recipient: s.recipient,
-          deposit: s.deposit,
-          withdrawn: s.withdrawn,
-          startTime: Number(s.startTime),
-          stopTime: Number(s.stopTime),
-          active: s.active,
-          role,
-        });
+        const rows: StreamRow[] = [];
+        for (const [idStr, role] of roles) {
+          const id = BigInt(idStr);
+          const s = (await publicClient.readContract({
+            address: STREAMPAY_ADDRESS,
+            abi: streamPayAbi,
+            functionName: "getStream",
+            args: [id],
+          })) as {
+            sender: string;
+            recipient: string;
+            deposit: bigint;
+            withdrawn: bigint;
+            startTime: bigint;
+            stopTime: bigint;
+            active: boolean;
+          };
+          rows.push({
+            id,
+            sender: s.sender,
+            recipient: s.recipient,
+            deposit: s.deposit,
+            withdrawn: s.withdrawn,
+            startTime: Number(s.startTime),
+            stopTime: Number(s.stopTime),
+            active: s.active,
+            role,
+          });
+        }
+        rows.sort((a, b) => Number(b.id - a.id));
+
+        setBalance(bal);
+        setClaimableBal(claim);
+        setStreams(rows);
+        setLoading(false);
+        return;
+      } catch {
+        if (attempt >= 4) {
+          setFailed(true);
+          setLoading(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
       }
-      rows.sort((a, b) => Number(b.id - a.id));
-      setStreams(rows);
-    } finally {
-      setLoading(false);
     }
   }, [publicClient, address]);
 
@@ -440,24 +451,37 @@ export default function Home() {
 
             {loading && <p className="text-center text-slate-500">Loading your streams…</p>}
 
-            <StreamList
-              title="Incoming — money flowing to you"
-              empty="No incoming streams yet."
-              rows={incoming}
-              now={now}
-              busy={busy}
-              onAction={withdraw}
-              actionLabel="Withdraw"
-            />
-            <StreamList
-              title="Outgoing — money you're streaming"
-              empty="You're not streaming to anyone yet."
-              rows={outgoing}
-              now={now}
-              busy={busy}
-              onAction={cancel}
-              actionLabel="Cancel"
-            />
+            {!loading && failed && (
+              <p className="text-center text-slate-500">
+                Couldn&apos;t load your streams — the network may be busy.{" "}
+                <button onClick={refresh} className="font-semibold underline">
+                  Retry
+                </button>
+              </p>
+            )}
+
+            {!loading && !failed && (
+              <>
+                <StreamList
+                  title="Incoming — money flowing to you"
+                  empty="No incoming streams yet."
+                  rows={incoming}
+                  now={now}
+                  busy={busy}
+                  onAction={withdraw}
+                  actionLabel="Withdraw"
+                />
+                <StreamList
+                  title="Outgoing — money you're streaming"
+                  empty="You're not streaming to anyone yet."
+                  rows={outgoing}
+                  now={now}
+                  busy={busy}
+                  onAction={cancel}
+                  actionLabel="Cancel"
+                />
+              </>
+            )}
           </div>
         )}
       </main>
