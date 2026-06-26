@@ -89,29 +89,6 @@ El frontend no guarda estado propio: escribe al contrato, espera y lo vuelve a l
 
 ---
 
-## Correrlo localmente
-
-Necesita [Foundry](https://book.getfoundry.sh/) y Node.js.
-
-```bash
-forge test           # corre la suite
-forge coverage       # reporte de coverage
-
-cd web && npm install && npm run dev   # http://localhost:3000
-```
-
-La app apunta a **Sepolia** por defecto; para dev local con anvil, apuntá `EXPECTED_CHAIN` (`app/page.tsx`) y las addresses (`lib/contract.ts`) a tu deploy local.
-
-### Deploy
-
-```bash
-cp .env.example .env   # completá DEPLOYER_PRIVATE_KEY (+ ETHERSCAN_API_KEY para verificar)
-source .env
-forge script script/Deploy.s.sol --rpc-url sepolia --private-key $DEPLOYER_PRIVATE_KEY --broadcast --verify
-```
-
----
-
 ## Tests
 
 ```

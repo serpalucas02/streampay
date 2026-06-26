@@ -89,29 +89,6 @@ The frontend holds no state of its own: it writes to the contract, waits, and re
 
 ---
 
-## Run it locally
-
-Needs [Foundry](https://book.getfoundry.sh/) and Node.js.
-
-```bash
-forge test           # run the suite
-forge coverage       # coverage report
-
-cd web && npm install && npm run dev   # http://localhost:3000
-```
-
-The app is wired to **Sepolia** by default; for local anvil dev, point `EXPECTED_CHAIN` (`app/page.tsx`) and the addresses (`lib/contract.ts`) to your local deployment.
-
-### Deploy
-
-```bash
-cp .env.example .env   # fill DEPLOYER_PRIVATE_KEY (+ ETHERSCAN_API_KEY to verify)
-source .env
-forge script script/Deploy.s.sol --rpc-url sepolia --private-key $DEPLOYER_PRIVATE_KEY --broadcast --verify
-```
-
----
-
 ## Tests
 
 ```
