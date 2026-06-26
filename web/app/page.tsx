@@ -294,7 +294,7 @@ export default function Home() {
 
   return (
     <div className="flex flex-1 flex-col bg-gradient-to-b from-sky-50 via-white to-blue-100 text-slate-900">
-      <header className="flex items-center justify-between px-6 py-4">
+      <header className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
         <span className="text-xl font-bold">💸 StreamPay</span>
         {isConnected ? (
           <button
@@ -313,9 +313,9 @@ export default function Home() {
         )}
       </header>
 
-      <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-10">
+      <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
         <div className="mb-10 text-center">
-          <h1 className="text-4xl font-extrabold tracking-tight">
+          <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
             <span className="bg-gradient-to-r from-blue-700 to-sky-500 bg-clip-text text-transparent">
               Stream payments by the second
             </span>
@@ -342,7 +342,7 @@ export default function Home() {
         {isConnected && !wrongNetwork && (
           <div className="space-y-8">
             {claimableBal > BigInt(0) && (
-              <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <div className="flex flex-col items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-sm text-emerald-900">
                   You have <strong>{fmt(claimableBal)} {TOKEN_SYMBOL}</strong> ready to claim (from cancelled streams).
                 </span>
@@ -358,7 +358,7 @@ export default function Home() {
 
             {/* faucet + create form */}
             <section className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="mb-4 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-sm text-slate-500">
                   Balance: <strong>{fmt(balance)} {TOKEN_SYMBOL}</strong>
                 </span>
@@ -538,7 +538,7 @@ function StreamCard({
       </div>
 
       {/* the live counter */}
-      <div className="mb-1 font-mono text-2xl font-bold text-blue-700">
+      <div className="mb-1 break-words font-mono text-xl font-bold text-blue-700 sm:text-2xl">
         {fmt(streamed, 6)} <span className="text-base text-slate-400">/ {fmt(s.deposit)} {TOKEN_SYMBOL}</span>
       </div>
 
@@ -546,7 +546,7 @@ function StreamCard({
         <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
       </div>
 
-      <div className="flex items-center justify-between text-sm text-slate-500">
+      <div className="flex flex-col items-start gap-2 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
         <span>Withdrawn: {fmt(s.withdrawn)} {TOKEN_SYMBOL}</span>
         {s.active && (
           <button
